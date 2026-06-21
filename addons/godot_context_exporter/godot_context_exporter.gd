@@ -103,6 +103,15 @@ var scene_group_depth_spinbox: SpinBox
 var scene_expand_all_button: Button
 var scene_collapse_all_button: Button
 
+# Shader Tab Controls
+var shader_list: ItemList
+var select_all_shaders_checkbox: CheckBox
+var shader_group_by_folder_checkbox: CheckBox
+var wrap_shaders_in_markdown_checkbox: CheckBox
+var shader_group_depth_spinbox: SpinBox
+var shader_expand_all_button: Button
+var shader_collapse_all_button: Button
+
 # Popups
 var formats_list_vbox: VBoxContainer
 var advanced_settings_dialog: Window
@@ -126,6 +135,14 @@ var scene_group_depth: int = 0
 var all_scene_paths: Array[String] = []
 var scene_folder_data: Dictionary = {} # Dict[String, FlatFolderData]
 var scene_tree_nodes: Dictionary = {} # Dict[String, TreeNodeData]
+
+# Shader Selection State
+var shader_group_by_folder: bool = true
+var shader_group_depth: int = 0
+var wrap_shaders_in_markdown: bool = false
+var all_shader_paths: Array[String] = []
+var shader_folder_data: Dictionary = {} # Dict[String, FlatFolderData]
+var shader_tree_nodes: Dictionary = {} # Dict[String, TreeNodeData]
 
 # Export Options
 var include_inspector_changes: bool = false
@@ -254,12 +271,15 @@ func _setup_ui() -> void:
 	tab_container.set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT)
 	tabs_wrapper.add_child(tab_container)
 
-	# Build and add the two main tabs
+	# Build and add the three main tabs
 	tab_container.add_child(_create_scripts_tab())
 	tab_container.set_tab_title(0, "Scripts")
 	
 	tab_container.add_child(_create_scenes_tab())
 	tab_container.set_tab_title(1, "Scenes")
+
+	tab_container.add_child(_create_shaders_tab())
+	tab_container.set_tab_title(2, "Shaders")
 	
 	# Advanced Settings Button
 	# We manually position this button at the Top-Right of the wrapper to make it look like 
@@ -529,6 +549,103 @@ func _create_scenes_tab() -> Control:
 		"Prevents hundreds of internal mesh nodes from cluttering your export.\n" +
 		"(You can configure extensions in Advanced Settings)"
 	))
+
+	return vbox
+
+## Constructs the content of the "Shaders" tab.
+func _create_shaders_tab() -> Control:
+	var vbox = VBoxContainer.new()
+	vbox.name = "ShadersTab"
+	vbox.add_theme_constant_override("separation", 10)
+
+	# Header
+	var shaders_label = RichTextLabel.new()
+	shaders_label.bbcode_enabled = true
+	shaders_label.text = "[b][color=#d5eaf2]Select Shaders to Export:[/color][/b]"
+	shaders_label.fit_content = true
+	vbox.add_child(shaders_label)
+
+	# Toolbar
+	var options_hbox = HBoxContainer.new()
+	vbox.add_child(options_hbox)
+
+	select_all_shaders_checkbox = CheckBox.new()
+	select_all_shaders_checkbox.text = "Select All"
+	select_all_shaders_checkbox.add_theme_color_override("font_color", COLOR_ACCENT)
+	select_all_shaders_checkbox.pressed.connect(_on_select_all_shaders_toggled)
+	options_hbox.add_child(select_all_shaders_checkbox)
+	
+	options_hbox.add_child(VSeparator.new())
+	
+	shader_group_by_folder_checkbox = CheckBox.new()
+	shader_group_by_folder_checkbox.text = "Group by Folder"
+	shader_group_by_folder_checkbox.button_pressed = true
+	shader_group_by_folder_checkbox.toggled.connect(_on_shader_group_by_folder_toggled)
+	options_hbox.add_child(shader_group_by_folder_checkbox)
+
+	var depth_hbox = HBoxContainer.new()
+	options_hbox.add_child(depth_hbox)
+	
+	var depth_label = Label.new()
+	depth_label.text = "Depth:"
+	depth_label.tooltip_text = "0 = Recursive Tree (Auto)\n1 = Root level\n2 = Subfolder level"
+	depth_hbox.add_child(depth_label)
+	
+	shader_group_depth_spinbox = SpinBox.new()
+	shader_group_depth_spinbox.min_value = 0
+	shader_group_depth_spinbox.max_value = 10
+	shader_group_depth_spinbox.value = shader_group_depth
+	shader_group_depth_spinbox.tooltip_text = depth_label.tooltip_text
+	shader_group_depth_spinbox.editable = true
+	shader_group_depth_spinbox.modulate.a = 1.0
+	shader_group_depth_spinbox.value_changed.connect(func(val: float) -> void:
+		shader_group_depth = int(val)
+		_build_shader_data_model()
+		_render_shader_list()
+	)
+	depth_hbox.add_child(shader_group_depth_spinbox)
+
+	options_hbox.add_child(VSeparator.new())
+	
+	shader_expand_all_button = Button.new()
+	shader_expand_all_button.text = "Expand All"
+	shader_expand_all_button.pressed.connect(_on_expand_collapse_shaders.bind(true))
+	options_hbox.add_child(shader_expand_all_button)
+	
+	shader_collapse_all_button = Button.new()
+	shader_collapse_all_button.text = "Collapse All"
+	shader_collapse_all_button.pressed.connect(_on_expand_collapse_shaders.bind(false))
+	options_hbox.add_child(shader_collapse_all_button)
+	
+	# The Main List
+	var list_panel = _create_list_panel()
+	list_panel.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vbox.add_child(list_panel)
+
+	shader_list = ItemList.new()
+	shader_list.select_mode = ItemList.SELECT_SINGLE
+	shader_list.allow_reselect = true
+	shader_list.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	shader_list.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	shader_list.item_clicked.connect(_on_shader_item_clicked)
+	list_panel.add_child(shader_list)
+
+	# Tab Footer
+	var options_grid = GridContainer.new()
+	options_grid.columns = 2
+	options_grid.add_theme_constant_override("h_separation", 20)
+	options_grid.add_theme_constant_override("v_separation", 5)
+	vbox.add_child(options_grid)
+
+	var markdown_hbox = HBoxContainer.new()
+	markdown_hbox.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	markdown_hbox.add_theme_constant_override("separation", INFO_ICON_GAP)
+	options_grid.add_child(markdown_hbox)
+
+	wrap_shaders_in_markdown_checkbox = CheckBox.new()
+	wrap_shaders_in_markdown_checkbox.text = "Use Markdown (```gdshader```)"
+	wrap_shaders_in_markdown_checkbox.toggled.connect(func(p: bool) -> void: wrap_shaders_in_markdown = p)
+	markdown_hbox.add_child(wrap_shaders_in_markdown_checkbox)
 
 	return vbox
 
@@ -931,6 +1048,9 @@ func _scan_and_refresh() -> void:
 	
 	all_scene_paths = _find_files_recursive("res://", ".tscn")
 	all_scene_paths.sort()
+
+	all_shader_paths = _find_files_recursive("res://", ".gdshader")
+	all_shader_paths.sort()
 	
 	# Rebuild internal data models
 	_build_script_data_model()
@@ -938,6 +1058,9 @@ func _scan_and_refresh() -> void:
 	
 	_build_scene_data_model()
 	_render_scene_list()
+
+	_build_shader_data_model()
+	_render_shader_list()
 
 # --- Scripts Model Construction ---
 func _build_script_data_model() -> void:
@@ -953,6 +1076,13 @@ func _build_scene_data_model() -> void:
 		_build_recursive_tree_data(all_scene_paths, scene_tree_nodes)
 	else:
 		_build_flat_group_data(all_scene_paths, scene_folder_data, scene_group_depth)
+
+# --- Shaders Model Construction ---
+func _build_shader_data_model() -> void:
+	if shader_group_by_folder and shader_group_depth == 0:
+		_build_recursive_tree_data(all_shader_paths, shader_tree_nodes)
+	else:
+		_build_flat_group_data(all_shader_paths, shader_folder_data, shader_group_depth)
 
 # --- Shared Logic ---
 
@@ -1080,6 +1210,15 @@ func _render_scene_list() -> void:
 		_render_recursive_tree_list(scene_list, scene_tree_nodes, "res://", 0, "scene")
 	else:
 		_render_flat_list(scene_list, scene_folder_data, "scene")
+
+func _render_shader_list() -> void:
+	shader_list.clear()
+	if not shader_group_by_folder:
+		_render_simple_flat_list(shader_list, all_shader_paths, shader_folder_data, "shader")
+	elif shader_group_depth == 0:
+		_render_recursive_tree_list(shader_list, shader_tree_nodes, "res://", 0, "shader")
+	else:
+		_render_flat_list(shader_list, shader_folder_data, "shader")
 
 # --- Generic Rendering Helpers ---
 
@@ -1348,6 +1487,41 @@ func _on_select_all_scenes_toggled() -> void:
 		_select_all_flat(is_checked, scene_folder_data)
 	_render_scene_list()
 
+# --- Shader Handlers ---
+
+func _on_shader_item_clicked(index: int, at_position: Vector2, mouse_button_index: int) -> void:
+	_handle_item_click(shader_list, index, at_position, mouse_button_index,
+		shader_tree_nodes, shader_folder_data, shader_group_depth == 0,
+		_render_shader_list, _toggle_shader_tree_checkbox, Callable())
+
+func _toggle_shader_tree_checkbox(path: String, new_state: bool) -> void:
+	_toggle_generic_tree_checkbox(path, new_state, shader_tree_nodes)
+
+func _on_shader_group_by_folder_toggled(pressed: bool) -> void:
+	shader_group_by_folder = pressed
+	if is_instance_valid(shader_group_depth_spinbox):
+		shader_group_depth_spinbox.editable = pressed
+		shader_group_depth_spinbox.modulate.a = 1.0 if pressed else 0.5
+
+	if is_instance_valid(shader_expand_all_button):
+		shader_expand_all_button.disabled = not pressed
+		shader_collapse_all_button.disabled = not pressed
+
+	_build_shader_data_model()
+	_render_shader_list()
+
+func _on_expand_collapse_shaders(do_expand: bool) -> void:
+	_expand_collapse_generic(do_expand, shader_group_depth == 0, shader_tree_nodes, shader_folder_data)
+	_render_shader_list()
+
+func _on_select_all_shaders_toggled() -> void:
+	var is_checked: bool = select_all_shaders_checkbox.button_pressed
+	if shader_group_depth == 0:
+		_toggle_generic_tree_checkbox("res://", is_checked, shader_tree_nodes)
+	else:
+		_select_all_flat(is_checked, shader_folder_data)
+	_render_shader_list()
+
 # --- Logic Implementation Helpers ---
 
 func _toggle_generic_tree_checkbox(path: String, new_state: bool, nodes: Dictionary) -> void:
@@ -1403,9 +1577,11 @@ func _select_all_flat(is_checked: bool, flat_dict: Dictionary) -> void:
 func _export_selected(to_clipboard: bool) -> void:
 	var selected_scripts: Array[String] = _get_selected_script_paths()
 	var selected_scenes: Array[String] = _get_selected_scene_paths()
+	var selected_shaders: Array[String] = _get_selected_shader_paths()
 
 	selected_scripts.sort()
 	selected_scenes.sort()
+	selected_shaders.sort()
 
 	# Handle Autoloads (Singletons)
 	var default_scripts: Array[String] = []
@@ -1432,7 +1608,7 @@ func _export_selected(to_clipboard: bool) -> void:
 		selected_scenes = unique_scenes
 
 	# Validation: Ensure we actually have something to export
-	if not include_project_godot and not has_autoloads and selected_scripts.is_empty() and selected_scenes.is_empty():
+	if not include_project_godot and not has_autoloads and selected_scripts.is_empty() and selected_scenes.is_empty() and selected_shaders.is_empty():
 		_set_status_message("Nothing selected to export.", COLOR_WARNING)
 		return
 		
@@ -1465,6 +1641,12 @@ func _export_selected(to_clipboard: bool) -> void:
 		if not content_text.is_empty(): content_text += "\n\n"
 		content_text += "--- SCENES ---\n\n"
 		content_text += _build_scenes_content(selected_scenes)
+
+	# 5. Export Selected Shaders
+	if not selected_shaders.is_empty():
+		if not content_text.is_empty(): content_text += "\n\n"
+		content_text += "--- SHADERS ---\n\n"
+		content_text += _build_shaders_content(selected_shaders)
 	
 	# Finalize
 	var total_lines: int = content_text.split("\n").size()
@@ -1473,7 +1655,7 @@ func _export_selected(to_clipboard: bool) -> void:
 
 	var stats_line: String = "\nTotal: %d lines, %d characters (~%d tokens)" % [total_lines, total_chars, approx_tokens]
 
-	var items_str: String = "%d script(s), %d scene(s)" % [selected_scripts.size(), selected_scenes.size()]
+	var items_str: String = "%d script(s), %d scene(s), %d shader(s)" % [selected_scripts.size(), selected_scenes.size(), selected_shaders.size()]
 	if include_project_godot: items_str += ", project.godot"
 	if has_autoloads: items_str += " + Globals"
 
@@ -1516,6 +1698,9 @@ func _get_selected_script_paths() -> Array[String]:
 
 func _get_selected_scene_paths() -> Array[String]:
 	return _get_selected_paths_generic(scene_group_depth == 0, scene_tree_nodes, scene_folder_data)
+
+func _get_selected_shader_paths() -> Array[String]:
+	return _get_selected_paths_generic(shader_group_depth == 0, shader_tree_nodes, shader_folder_data)
 
 func _get_selected_paths_generic(is_tree: bool, tree_dict: Dictionary, flat_dict: Dictionary) -> Array[String]:
 	var selected: Array[String] = []
@@ -1654,6 +1839,19 @@ func _build_scenes_content(paths: Array[String], use_markdown_override: Variant 
 		return "```text\n" + final_content + "\n```"
 	else:
 		return final_content
+
+func _build_shaders_content(paths: Array[String]) -> String:
+	var content: String = ""
+	for file_path: String in paths:
+		var file: FileAccess = FileAccess.open(file_path, FileAccess.READ)
+		if file:
+			var file_content: String = file.get_as_text()
+			content += "--- SHADER: " + file_path + " ---\n\n"
+			if wrap_shaders_in_markdown:
+				content += "```gdshader\n" + file_content + "\n```\n\n"
+			else:
+				content += file_content + "\n\n"
+	return content.rstrip("\n")
 
 func _build_tree_string_for_scene(root_node: Node) -> String:
 	if not is_instance_valid(root_node): return ""
